@@ -1,0 +1,1119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Custom Rx Window Forecast</title>
+<!-- Custom Rx viewer -- copied next to rx_window_forecast.py's daily index.html as custom.html
+     (and to GitHub Pages as rx-window/index.html) by rx_web_export.py. Unlike index.html this
+     page renders NO pre-made PNGs: rx_data.js carries the raw hourly forecast for every grid
+     cell, and the script below re-scores it against whatever prescription the viewer types in
+     (a line-for-line port of score_location) and redraws the map on a <canvas> using
+     render_day's own layout, ramp, boundary styling and limiting-factor letters. The data
+     loads via <script src> (not fetch) so the page also works double-clicked from disk. -->
+<style>
+  :root {
+    --bg: #eef1f0; --surface: #ffffff; --surface-2: #e2e6e4; --surface-3: #d5dad7;
+    --border: #c7cdc9; --text: #1b201e; --text-dim: #5c655f;
+    --accent: #d9622a; --accent-ink: #ffffff; --accent-soft: #f4dccb; --focus: #1b6de0;
+    --bad: #c62f2f; --warm: #b8202e; --cold: #3b4cc0; --ok: #2e7d4f;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161a; --surface: #191f24; --surface-2: #212830; --surface-3: #2a323b;
+      --border: #333d47; --text: #e8ecef; --text-dim: #8b98a3;
+      --accent: #ff8a4c; --accent-ink: #1b1006; --accent-soft: #3a2416; --focus: #6fa8ff;
+      --bad: #ff6b68; --warm: #ff7b7b; --cold: #8fa2ff; --ok: #6fd39a;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12161a; --surface: #191f24; --surface-2: #212830; --surface-3: #2a323b;
+    --border: #333d47; --text: #e8ecef; --text-dim: #8b98a3;
+    --accent: #ff8a4c; --accent-ink: #1b1006; --accent-soft: #3a2416; --focus: #6fa8ff;
+    --bad: #ff6b68; --warm: #ff7b7b; --cold: #8fa2ff; --ok: #6fd39a;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Consolas, monospace; }
+
+  .console { max-width: 1180px; margin: 0 auto; padding: 10px; display: flex; align-items: flex-start; gap: 14px; }
+  .mapCol { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+  .sideCol {
+    flex: 0 0 300px; display: flex; flex-direction: column; gap: 8px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px;
+  }
+  .group { display: flex; flex-direction: column; gap: 5px; }
+  .groupLabel { font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); }
+  .groupHead { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+  .groupHead a, .linkBtn { font-size: 10.5px; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; font: inherit; font-size: 10.5px; }
+
+  .brand { display: flex; align-items: center; gap: 8px; }
+  .brand-mark {
+    font-family: ui-monospace, Consolas, monospace; font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    background: var(--accent); color: var(--accent-ink); padding: 3px 6px; border-radius: 3px; line-height: 1;
+  }
+  .brand h1 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; text-wrap: balance; }
+  .readout { display: flex; flex-direction: column; gap: 3px; margin: 0; }
+  .readout dt { font-size: 9.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); }
+  .readout dd { margin: 1px 0 0; font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; font-variant-numeric: tabular-nums; line-height: 1.3; }
+
+  select, input[type="number"] {
+    font: inherit; font-size: 12.5px; color: var(--text); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; min-width: 0;
+  }
+  select:focus-visible, input[type="number"]:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+  input[type="number"] { width: 100%; font-variant-numeric: tabular-nums; }
+  input[type="number"][aria-invalid="true"] { border-color: var(--bad); box-shadow: 0 0 0 1px var(--bad); }
+  input[type="number"]::placeholder { color: var(--text-dim); opacity: 0.7; }
+
+  .rxTable { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1fr); gap: 4px 6px; align-items: center; }
+  .rxTable .h { font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); }
+  .rxTable label { font-size: 12px; }
+  .rxTable label small { color: var(--text-dim); font-size: 10.5px; }
+  .rxTable .na { font-size: 11px; color: var(--text-dim); text-align: center; }
+  .opRow { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .opRow select { flex: 1 1 0; }
+  .warn { font-size: 11px; color: var(--bad); margin: 0; }
+
+  .dayRow { display: flex; gap: 5px; flex-wrap: wrap; }
+  .pill {
+    appearance: none; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    font: inherit; font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 999px; cursor: pointer;
+  }
+  .pill:hover { border-color: var(--text-dim); }
+  .pill:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .pill[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+
+  .viewport {
+    position: relative; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+    aspect-ratio: 7.5 / 7.9; overflow: hidden;
+  }
+  .viewport canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #overlay { cursor: crosshair; }
+  .cursorLine { font-size: 11.5px; color: var(--text-dim); min-height: 1.3em; margin: -4px 2px 0; }
+
+  input[type="range"] {
+    -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 999px;
+    background: var(--surface-3); outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 15px; height: 15px; border-radius: 50%; background: var(--accent);
+    border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--border); cursor: pointer; margin-top: -5.5px;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 13px; height: 13px; border-radius: 50%; background: var(--accent);
+    border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--border); cursor: pointer;
+  }
+  input[type="range"]:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+
+  .transport { display: flex; flex-wrap: wrap; gap: 4px; }
+  .btn {
+    appearance: none; border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+    font: inherit; font-size: 12.5px; font-weight: 600; min-width: 34px; height: 28px; border-radius: 4px;
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0 8px;
+    text-decoration: none;
+  }
+  .btn:hover { background: var(--surface-3); }
+  .btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-play { min-width: 40px; font-size: 14px; }
+  .btn-play[data-playing="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .btn-toggle { font-size: 10.5px; letter-spacing: 0.05em; font-weight: 700; flex: 1 1 auto; }
+  .btn-toggle[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .btn-wide { flex: 1 1 auto; font-size: 11px; letter-spacing: 0.04em; }
+  .speed { display: flex; align-items: center; gap: 8px; }
+  .speed label { font-size: 9.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); }
+  .hint { margin: 0; font-size: 10.5px; line-height: 1.4; color: var(--text-dim); }
+  .hint a { color: inherit; }
+  .metaBlock { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--border); padding-top: 6px; }
+  .toast { font-size: 11px; color: var(--ok); min-height: 1.2em; margin: 0; }
+
+  .detail { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .detailHead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .detailTitle { font-size: 12.5px; font-weight: 700; }
+  .detailSub { font-size: 11px; color: var(--text-dim); }
+  .tableWrap { overflow-x: auto; margin-top: 6px; }
+  table.hourly { border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+  table.hourly th, table.hourly td { padding: 2px 5px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); }
+  table.hourly th[scope="row"] { text-align: left; font-weight: 600; color: var(--text-dim); position: sticky; left: 0; background: var(--surface); }
+  table.hourly thead th { color: var(--text-dim); font-weight: 600; }
+  table.hourly td.hi { color: var(--warm); font-weight: 700; }
+  table.hourly td.lo { color: var(--cold); font-weight: 700; }
+  table.hourly td.pass { color: var(--ok); font-weight: 700; }
+  table.hourly td.fail { color: var(--text-dim); }
+  table.hourly .off { opacity: 0.45; }
+
+  .loadstate { font-size: 13px; color: var(--text-dim); text-align: center; padding: 40px 24px; }
+
+  @media (max-width: 760px) {
+    .console { flex-direction: column; }
+    .sideCol { flex: 1 1 auto; width: 100%; }
+    .mapCol { width: 100%; }
+  }
+</style>
+</head>
+<body>
+  <div class="console" id="console" hidden>
+    <div class="mapCol">
+      <div class="viewport" id="viewport">
+        <canvas id="mapCanvas" aria-label="Hours in prescription map"></canvas>
+        <canvas id="overlay" aria-hidden="true"></canvas>
+      </div>
+      <p class="cursorLine mono" id="cursorLine">Click a cell for its hour-by-hour breakdown.</p>
+      <section class="detail" id="detail" hidden>
+        <div class="detailHead">
+          <span class="detailTitle" id="detailTitle"></span>
+          <span class="detailSub" id="detailSub"></span>
+        </div>
+        <div class="tableWrap"><table class="hourly" id="detailTable"></table></div>
+      </section>
+    </div>
+
+    <aside class="sideCol">
+      <div class="brand">
+        <span class="brand-mark">RX</span>
+        <h1>Custom Prescription Window</h1>
+      </div>
+      <dl class="readout">
+        <div><dt>Issued</dt><dd id="issuedReadout">&mdash;</dd></div>
+        <div><dt>Frame</dt><dd id="frameReadout">&mdash;</dd></div>
+      </dl>
+
+      <div class="group">
+        <div class="groupHead">
+          <label class="groupLabel" for="presetSelect">Start from</label>
+          <a id="stdLink" href="index.html" hidden>Standard maps &rarr;</a>
+        </div>
+        <select id="presetSelect" aria-label="Prescription preset"></select>
+      </div>
+
+      <div class="group">
+        <div class="groupHead">
+          <span class="groupLabel">Prescription</span>
+          <span class="hint">blank = no limit</span>
+        </div>
+        <div class="rxTable" id="rxTable">
+          <span class="h"></span><span class="h">Min</span><span class="h">Max</span>
+          <label for="temp_min_f">Temp <small>&deg;F</small></label>
+          <input type="number" id="temp_min_f" step="1" inputmode="decimal" aria-label="Temperature minimum, °F">
+          <input type="number" id="temp_max_f" step="1" inputmode="decimal" aria-label="Temperature maximum, °F">
+          <label for="rh_min_pct">RH <small>%</small></label>
+          <input type="number" id="rh_min_pct" step="1" inputmode="decimal" aria-label="Relative humidity minimum, %">
+          <input type="number" id="rh_max_pct" step="1" inputmode="decimal" aria-label="Relative humidity maximum, %">
+          <label for="wind_min_mph">Wind <small>10-m mph</small></label>
+          <input type="number" id="wind_min_mph" step="1" inputmode="decimal" aria-label="10-m wind minimum, mph">
+          <input type="number" id="wind_max_mph" step="1" inputmode="decimal" aria-label="10-m wind maximum, mph">
+          <label for="gust_max_mph">Gust <small>mph</small></label>
+          <span class="na">&mdash;</span>
+          <input type="number" id="gust_max_mph" step="1" inputmode="decimal" aria-label="Gust maximum, mph">
+          <label for="vent_min_ft">Mixing ht <small>ft</small></label>
+          <input type="number" id="vent_min_ft" step="100" inputmode="decimal" aria-label="Mixing height minimum, ft">
+          <span class="na">&mdash;</span>
+        </div>
+        <div class="opRow">
+          <label for="opStart">Hours</label>
+          <select id="opStart" aria-label="Operational window start"></select>
+          <span>to</span>
+          <select id="opEnd" aria-label="Operational window end"></select>
+        </div>
+        <p class="warn" id="rxWarn" hidden></p>
+        <div class="transport">
+          <button class="btn btn-wide" id="btnSave" type="button" title="Save this prescription in this browser">SAVE</button>
+          <button class="btn btn-wide" id="btnDelete" type="button" title="Delete the selected saved prescription" hidden>DELETE</button>
+          <button class="btn btn-wide" id="btnShare" type="button" title="Copy a link that opens this prescription">COPY LINK</button>
+        </div>
+        <p class="toast" id="toast" role="status"></p>
+      </div>
+
+      <div class="group">
+        <span class="groupLabel">Forecast Day</span>
+        <div class="dayRow" id="dayPills" role="tablist" aria-label="Forecast day"></div>
+        <input type="range" id="scrubber" min="0" max="0" value="0" step="1" aria-label="Forecast day">
+      </div>
+
+      <div class="group">
+        <span class="groupLabel">Playback</span>
+        <div class="transport" role="group" aria-label="Playback">
+          <button class="btn" id="btnFirst" title="First day (Home)">|&laquo;</button>
+          <button class="btn" id="btnPrev" title="Previous day (Left arrow)">&laquo;</button>
+          <button class="btn btn-play" id="btnPlay" title="Play / pause (Space)">&#9654;</button>
+          <button class="btn" id="btnNext" title="Next day (Right arrow)">&raquo;</button>
+          <button class="btn" id="btnLast" title="Last day (End)">&raquo;|</button>
+          <button class="btn btn-toggle" id="btnReverse" title="Reverse playback direction" aria-pressed="false">REVERSE</button>
+        </div>
+        <div class="speed">
+          <label for="speedSlider">Speed</label>
+          <input type="range" id="speedSlider" min="1" max="10" value="4" aria-label="Animation speed">
+        </div>
+      </div>
+
+      <div class="group">
+        <span class="groupLabel">Export</span>
+        <div class="transport">
+          <button class="btn btn-wide" id="btnPng" type="button" title="Download this day's map as PNG">PNG</button>
+          <button class="btn btn-wide" id="btnCsv" type="button" title="Per-cell hours for this prescription, all days">CSV</button>
+        </div>
+      </div>
+
+      <div class="metaBlock">
+        <p class="hint mono" id="statsText"></p>
+        <p class="hint">Uncolored land = 0 hours; gray = no forecast data. Letters in large blank areas
+          mark the limit that failed most hours (T/RH/W/G/V): red = too hot/dry/windy/gusty,
+          blue = too cold/moist/calm or mixing height too low.</p>
+        <p class="hint">Wind is the model's 10-m wind (roughly 15&ndash;20% above 20-ft wind); mixing
+          height is the model boundary-layer height. Saved prescriptions stay in this browser only.</p>
+        <p class="hint" id="sourceText"></p>
+        <p class="hint">Space play &middot; &larr;/&rarr; step &middot; Home/End &middot;
+          <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> CC-BY-4.0</p>
+      </div>
+    </aside>
+  </div>
+
+  <div class="loadstate" id="loadState">Loading forecast data&hellip;</div>
+
+<script src="rx_boundaries.js"></script>
+<script src="rx_data.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var D = window.__RX_DATA__, B = window.__RX_BOUNDARIES__;
+  var $ = function (id) { return document.getElementById(id); };
+  if (!D || !B) {
+    $("loadState").textContent = "Could not load rx_data.js / rx_boundaries.js. Open custom.html from the " +
+      "output folder written by rx_window_forecast.py.";
+    return;
+  }
+
+  // ------------------------------------------------------------------ constants (rx_window_forecast.py)
+  var M_TO_FT = 3.28084;
+  var LIMITS = ["temp", "rh", "wind", "gust", "vent"];
+  var LIMIT_SUBKEYS = { temp: [0, 1], rh: [2, 3], wind: [4, 5], gust: [6], vent: [7] };
+  // REASON_SUBKEYS order: temp_high, temp_low, rh_low, rh_high, wind_high, wind_low, gust_high, vent_low
+  var REASON_LABEL = ["T", "T", "RH", "RH", "W", "W", "G", "V"];
+  var RED_UP = [true, false, true, false, true, false, true, false];
+  var RX_FIELDS = ["temp_min_f", "temp_max_f", "rh_min_pct", "rh_max_pct", "wind_min_mph",
+                   "wind_max_mph", "gust_max_mph", "vent_min_ft"];
+  var PAGE_W = 7.5, PAGE_H = 7.9, HEADER = 0.42, FOOTER = 0.20, BAR_PAD = 0.06;
+  var MAP_MARGIN = 0.1, MAP_LEFT = 0.15, CBAR_GAP = 0.3, CBAR_W = 0.26, CBAR_LABEL = 0.55,
+      CBAR_RIGHT = 0.1, CBAR_VINSET = 0.12, SUBTITLE = 0.22;
+  var STORE_KEY = "rxWindow.customPrescriptions.v1";
+
+  // ------------------------------------------------------------------ decode the hourly series
+  var G = D.grid, times = D.times, NT = times.length, NC = G.idx.length, ND = D.dates.length;
+  function decode(b64) {
+    var bin = atob(b64), n = bin.length, bytes = new Uint8Array(n);
+    for (var i = 0; i < n; i++) bytes[i] = bin.charCodeAt(i);
+    return new Int16Array(bytes.buffer);  // little-endian on every browser platform in practice
+  }
+  var S = {};
+  Object.keys(D.series).forEach(function (k) { S[k] = { scale: D.series[k].scale, v: decode(D.series[k].b64) }; });
+  var dateIndex = {};
+  D.dates.forEach(function (d, i) { dateIndex[d] = i; });
+  var tDay = new Int8Array(NT), tMin = new Int16Array(NT);
+  for (var ti = 0; ti < NT; ti++) {
+    var d0 = dateIndex[times[ti].slice(0, 10)];
+    tDay[ti] = d0 === undefined ? -1 : d0;
+    tMin[ti] = Number(times[ti].slice(11, 13)) * 60 + Number(times[ti].slice(14, 16));
+  }
+  function hhmmToMin(s) { return Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5)); }
+  function minToHHMM(m) { var h = Math.floor(m / 60); return (h < 10 ? "0" : "") + h + ":00"; }
+
+  // ------------------------------------------------------------------ scoring (port of score_location)
+  function limitsUsed(rx) {
+    return {
+      temp: rx.temp_min_f != null || rx.temp_max_f != null,
+      rh: rx.rh_min_pct != null || rx.rh_max_pct != null,
+      wind: rx.wind_min_mph != null || rx.wind_max_mph != null,
+      gust: rx.gust_max_mph != null,
+      vent: rx.vent_min_ft != null
+    };
+  }
+  function within(v, lo, hi) { return (lo == null || v >= lo) && (hi == null || v <= hi); }
+  function dirn(v, lo, hi) { return (hi != null && v > hi) ? 1 : ((lo != null && v < lo) ? -1 : 0); }
+  function val(k, c, t) {
+    var raw = S[k].v[c * NT + t];
+    return raw === D.missing ? null : raw / S[k].scale;
+  }
+
+  // Evaluate one hour; returns null (unusable), or {pass, fails:[subkey codes], v:{...}}.
+  function evalHour(rx, use, c, t) {
+    var T = val("temp", c, t), RH = val("rh", c, t), W = val("wind", c, t), Gu = val("gust", c, t), Bl = val("blh", c, t);
+    var v = { temp: T, rh: RH, wind: W, gust: Gu, blh: Bl };
+    if ((use.temp && T == null) || (use.rh && RH == null) || (use.wind && W == null) ||
+        (use.gust && Gu == null) || (use.vent && Bl == null)) return { usable: false, v: v };
+    var fails = [], dir = {};
+    if (use.temp && !within(T, rx.temp_min_f, rx.temp_max_f)) {
+      var a = dirn(T, rx.temp_min_f, rx.temp_max_f); if (a) { fails.push(a > 0 ? 0 : 1); dir.temp = a; }
+    }
+    if (use.rh && !within(RH, rx.rh_min_pct, rx.rh_max_pct)) {
+      var b = dirn(RH, rx.rh_min_pct, rx.rh_max_pct); if (b) { fails.push(b < 0 ? 2 : 3); dir.rh = b; }
+    }
+    if (use.wind && !within(W, rx.wind_min_mph, rx.wind_max_mph)) {
+      var c2 = dirn(W, rx.wind_min_mph, rx.wind_max_mph); if (c2) { fails.push(c2 > 0 ? 4 : 5); dir.wind = c2; }
+    }
+    if (use.gust && !(Gu <= rx.gust_max_mph)) { fails.push(6); dir.gust = 1; }
+    if (use.vent && !(Bl * M_TO_FT >= rx.vent_min_ft)) { fails.push(7); dir.blh = -1; }
+    var anyFail = (use.temp && !within(T, rx.temp_min_f, rx.temp_max_f)) ||
+                  (use.rh && !within(RH, rx.rh_min_pct, rx.rh_max_pct)) ||
+                  (use.wind && !within(W, rx.wind_min_mph, rx.wind_max_mph)) ||
+                  (use.gust && !(Gu <= rx.gust_max_mph)) || (use.vent && !(Bl * M_TO_FT >= rx.vent_min_ft));
+    return { usable: true, pass: !anyFail, fails: fails, dir: dir, v: v };
+  }
+
+  // Whole grid, every day: hours[d*NC + c] (NaN = no usable hours), reason[d*NC + c] (-1 = n/a,
+  // only set for a 0-hour cell/day, like score_grid).
+  function scoreAll(rx, opStart, opEnd) {
+    var use = limitsUsed(rx);
+    var hours = new Float32Array(ND * NC), reason = new Int8Array(ND * NC).fill(-1);
+    var passing = new Int16Array(ND), usable = new Int16Array(ND), fails = new Int16Array(ND * 8);
+    for (var c = 0; c < NC; c++) {
+      passing.fill(0); usable.fill(0); fails.fill(0);
+      for (var t = 0; t < NT; t++) {
+        var d = tDay[t];
+        if (d < 0 || tMin[t] < opStart || tMin[t] >= opEnd) continue;
+        var r = evalHour(rx, use, c, t);
+        if (!r.usable) continue;
+        usable[d]++;
+        if (r.pass) passing[d]++;
+        else for (var f = 0; f < r.fails.length; f++) fails[d * 8 + r.fails[f]]++;
+      }
+      for (d = 0; d < ND; d++) {
+        var o = d * NC + c;
+        if (usable[d] === 0) { hours[o] = NaN; continue; }
+        hours[o] = passing[d];
+        if (passing[d] !== 0) continue;
+        var bestL = null, bestTot = 0;
+        for (var li = 0; li < LIMITS.length; li++) {
+          var keys = LIMIT_SUBKEYS[LIMITS[li]], tot = 0;
+          for (var q = 0; q < keys.length; q++) tot += fails[d * 8 + keys[q]];
+          if (tot > bestTot) { bestTot = tot; bestL = keys; }
+        }
+        if (!bestL) continue;
+        var bestK = bestL[0];
+        for (q = 1; q < bestL.length; q++) if (fails[d * 8 + bestL[q]] > fails[d * 8 + bestK]) bestK = bestL[q];
+        reason[o] = bestK;
+      }
+    }
+    return { hours: hours, reason: reason };
+  }
+
+  function achievableHours(opStart, opEnd) {
+    var n = 0;
+    for (var t = 0; t < NT; t++) if (tDay[t] === 0 && tMin[t] >= opStart && tMin[t] < opEnd) n++;
+    return n;
+  }
+
+  // ------------------------------------------------------------------ text helpers (prescription_text)
+  function fmtNum(v) { return Number.isInteger(v) ? v.toLocaleString("en-US") : v.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
+  function rangeText(lo, hi, unit) {
+    if (lo != null && hi != null) return fmtNum(lo) + "–" + fmtNum(hi) + unit;
+    if (lo != null) return "≥ " + fmtNum(lo) + unit;
+    return "≤ " + fmtNum(hi) + unit;
+  }
+  function rxText(rx, sep) {
+    var u = limitsUsed(rx), p = [];
+    if (u.temp) p.push("Temp " + rangeText(rx.temp_min_f, rx.temp_max_f, " °F"));
+    if (u.rh) p.push("RH " + rangeText(rx.rh_min_pct, rx.rh_max_pct, "%"));
+    if (u.wind) p.push("Wind " + rangeText(rx.wind_min_mph, rx.wind_max_mph, " mph"));
+    if (u.gust) p.push("Gust ≤ " + fmtNum(rx.gust_max_mph) + " mph");
+    if (u.vent) p.push("Mix ht ≥ " + fmtNum(rx.vent_min_ft) + " ft");
+    return p.length ? p.join(sep || " · ") : "no limits set";
+  }
+  function fmtDate(iso, opts) {
+    var d = new Date(iso + "T00:00:00");
+    return isNaN(d) ? iso : d.toLocaleDateString("en-US", opts || { weekday: "short", month: "short", day: "numeric" });
+  }
+
+  // ------------------------------------------------------------------ color ramp (build_cmap)
+  function hexRgb(h) { h = h.replace("#", ""); return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]; }
+  function buildRamp(colors, n, fade) {
+    var stops = colors.map(hexRgb), out = [];
+    for (var i = 0; i < n; i++) {
+      var t = i / Math.max(n - 1, 1), x = t * (stops.length - 1), k = Math.min(Math.floor(x), stops.length - 2), f = x - k;
+      var c = [0, 1, 2].map(function (j) { return Math.round(stops[k][j] + (stops[k + 1][j] - stops[k][j]) * f); });
+      var a = (fade > 0 && i < fade) ? Math.min(1, (i + 1) / fade) : 1;
+      out.push([c[0], c[1], c[2], a]);
+    }
+    return out;
+  }
+  function rgba(c) { return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + c[3] + ")"; }
+
+  // ------------------------------------------------------------------ state
+  var MP = D.map;
+  var els = {
+    canvas: $("mapCanvas"), overlay: $("overlay"), viewport: $("viewport"),
+    presetSelect: $("presetSelect"), opStart: $("opStart"), opEnd: $("opEnd"), rxWarn: $("rxWarn"),
+    dayPills: $("dayPills"), scrubber: $("scrubber"), frameReadout: $("frameReadout"),
+    statsText: $("statsText"), toast: $("toast"), btnPlay: $("btnPlay"), btnReverse: $("btnReverse"),
+    speedSlider: $("speedSlider"), btnDelete: $("btnDelete"), cursorLine: $("cursorLine"),
+    detail: $("detail"), detailTitle: $("detailTitle"), detailSub: $("detailSub"), detailTable: $("detailTable")
+  };
+  var state = {
+    rx: {}, opStart: hhmmToMin(D.operational_start), opEnd: D.operational_end === "24:00" ? 1440 : hhmmToMin(D.operational_end),
+    day: 0, label: "", result: null, nRamp: 1, ramp: [], playing: false, reverse: false, timer: null,
+    selCell: -1, layout: null, logos: {}
+  };
+
+  // ------------------------------------------------------------------ saved prescriptions (browser only)
+  function loadSaved() {
+    try { var v = JSON.parse(localStorage.getItem(STORE_KEY) || "[]"); return Array.isArray(v) ? v : []; }
+    catch (e) { return []; }
+  }
+  function storeSaved(list) {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(list)); return true; } catch (e) { return false; }
+  }
+
+  function buildPresetSelect(selectValue) {
+    var sel = els.presetSelect;
+    sel.innerHTML = "";
+    var og1 = document.createElement("optgroup"); og1.label = "Daily scenarios";
+    D.scenarios.forEach(function (s) {
+      var o = document.createElement("option"); o.value = "s:" + s.key; o.textContent = s.label; og1.appendChild(o);
+    });
+    sel.appendChild(og1);
+    var saved = loadSaved();
+    if (saved.length) {
+      var og2 = document.createElement("optgroup"); og2.label = "Saved in this browser";
+      saved.forEach(function (s, i) {
+        var o = document.createElement("option"); o.value = "u:" + i; o.textContent = s.name; og2.appendChild(o);
+      });
+      sel.appendChild(og2);
+    }
+    var oc = document.createElement("option"); oc.value = "custom"; oc.textContent = "Custom (edited)"; sel.appendChild(oc);
+    sel.value = selectValue || "custom";
+    els.btnDelete.hidden = sel.value.indexOf("u:") !== 0;
+  }
+
+  function presetFor(value) {
+    if (value.indexOf("s:") === 0) {
+      var key = value.slice(2);
+      var s = D.scenarios.filter(function (x) { return x.key === key; })[0];
+      return s ? { name: s.label, rx: s.prescription, op: null } : null;
+    }
+    if (value.indexOf("u:") === 0) return loadSaved()[Number(value.slice(2))] || null;
+    return null;
+  }
+
+  function readInputs() {
+    var rx = {};
+    RX_FIELDS.forEach(function (f) {
+      var raw = $(f).value.trim();
+      rx[f] = raw === "" || isNaN(Number(raw)) ? null : Number(raw);
+    });
+    return rx;
+  }
+  function writeInputs(rx) { RX_FIELDS.forEach(function (f) { $(f).value = rx[f] == null ? "" : rx[f]; }); }
+  function sameRx(a, b) { return RX_FIELDS.every(function (f) { return (a[f] == null ? null : Number(a[f])) === (b[f] == null ? null : Number(b[f])); }); }
+
+  function buildOpSelects() {
+    for (var h = 0; h <= 24; h++) {
+      var lbl = (h < 10 ? "0" : "") + h + ":00";
+      if (h < 24) { var o = document.createElement("option"); o.value = h * 60; o.textContent = lbl; els.opStart.appendChild(o); }
+      if (h > 0) { var p = document.createElement("option"); p.value = h * 60; p.textContent = lbl; els.opEnd.appendChild(p); }
+    }
+  }
+
+  // ------------------------------------------------------------------ recompute
+  function validate(rx) {
+    var msgs = [];
+    [["temp_min_f", "temp_max_f", "Temp"], ["rh_min_pct", "rh_max_pct", "RH"], ["wind_min_mph", "wind_max_mph", "Wind"]].forEach(function (p) {
+      var bad = rx[p[0]] != null && rx[p[1]] != null && rx[p[0]] > rx[p[1]];
+      $(p[0]).setAttribute("aria-invalid", String(bad)); $(p[1]).setAttribute("aria-invalid", String(bad));
+      if (bad) msgs.push(p[2] + " min is above max");
+    });
+    if (state.opEnd <= state.opStart) msgs.push("Hours: end must be after start (no overnight windows)");
+    els.rxWarn.hidden = !msgs.length;
+    els.rxWarn.textContent = msgs.join(" · ") + (msgs.length ? " — no hours can pass." : "");
+  }
+
+  function recompute() {
+    state.rx = readInputs();
+    validate(state.rx);
+    var preset = presetFor(els.presetSelect.value);
+    state.label = preset && sameRx(preset.rx, state.rx) ? preset.name : "Custom";
+    var achievable = achievableHours(state.opStart, state.opEnd);
+    state.nRamp = MP.ramp_max_hours ? Number(MP.ramp_max_hours) : Math.max(achievable, 1);
+    state.ramp = buildRamp(MP.colors, state.nRamp, Number(MP.zero_fade_hours || 0));
+    state.achievable = achievable;
+    state.result = scoreAll(state.rx, state.opStart, state.opEnd);
+    updateHash();
+    render();
+  }
+
+  var recomputeTimer = null;
+  function scheduleRecompute() { clearTimeout(recomputeTimer); recomputeTimer = setTimeout(recompute, 120); }
+
+  // ------------------------------------------------------------------ share link (#hash)
+  function updateHash() {
+    var p = [];
+    RX_FIELDS.forEach(function (f) { if (state.rx[f] != null) p.push(f + "=" + state.rx[f]); });
+    p.push("op=" + state.opStart / 60 + "-" + state.opEnd / 60);
+    p.push("day=" + (state.day + 1));
+    if (state.label && state.label !== "Custom") p.push("name=" + encodeURIComponent(state.label));
+    if (state.selCell >= 0) { var ll = cellLatLon(state.selCell); p.push("cell=" + ll[0].toFixed(3) + "," + ll[1].toFixed(3)); }
+    try { history.replaceState(null, "", "#" + p.join("&")); } catch (e) { /* file:// in some browsers */ }
+  }
+  function readHash() {
+    var h = location.hash.replace(/^#/, "");
+    if (!h) return null;
+    var rx = {}, any = false, out = { rx: rx };
+    RX_FIELDS.forEach(function (f) { rx[f] = null; });
+    h.split("&").forEach(function (kv) {
+      var i = kv.indexOf("="), k = kv.slice(0, i), v = decodeURIComponent(kv.slice(i + 1));
+      if (RX_FIELDS.indexOf(k) >= 0 && v !== "" && !isNaN(Number(v))) { rx[k] = Number(v); any = true; }
+      else if (k === "op") { var m = v.split("-").map(Number); if (m.length === 2 && m.every(isFinite)) out.op = [m[0] * 60, m[1] * 60]; }
+      else if (k === "day") out.day = Math.max(0, Number(v) - 1) || 0;
+      else if (k === "name") out.name = v;
+      else if (k === "cell") { var cc = v.split(",").map(Number); if (cc.length === 2 && cc.every(isFinite)) out.cell = cc; }
+    });
+    return any || out.op ? out : null;
+  }
+
+  // ------------------------------------------------------------------ layout (render_day)
+  var X0 = D.view.xlim[0], X1 = D.view.xlim[1], Y0 = D.view.ylim[0], Y1 = D.view.ylim[1];
+  function computeLayout() {
+    var latAspect = 1 / Math.cos(((Y0 + Y1) / 2) * Math.PI / 180);
+    var hPerW = (Y1 - Y0) * latAspect / (X1 - X0);
+    var maxW = PAGE_W - MAP_LEFT - CBAR_GAP - CBAR_W - CBAR_LABEL - CBAR_RIGHT;
+    var reservedBottom = FOOTER + MAP_MARGIN + SUBTITLE + MAP_MARGIN;
+    var maxH = PAGE_H - HEADER - MAP_MARGIN - reservedBottom;
+    var mw, mh;
+    if (maxW * hPerW <= maxH) { mw = maxW; mh = maxW * hPerW; } else { mh = maxH; mw = maxH / hPerW; }
+    var left = MAP_LEFT + (maxW - mw) / 2, bottom = reservedBottom + (maxH - mh) / 2;
+    return { left: left, top: PAGE_H - bottom - mh, w: mw, h: mh, bottom: bottom, latAspect: latAspect };
+  }
+
+  function sizeCanvases() {
+    var rect = els.viewport.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    [els.canvas, els.overlay].forEach(function (cv) {
+      cv.width = Math.round(rect.width * dpr); cv.height = Math.round(rect.width * PAGE_H / PAGE_W * dpr);
+    });
+  }
+
+  // ------------------------------------------------------------------ drawing
+  function dayField(d) {
+    var f = new Float32Array(G.ny * G.nx).fill(NaN), r = new Int8Array(G.ny * G.nx).fill(-1);
+    var inside = new Uint8Array(G.ny * G.nx);
+    for (var c = 0; c < NC; c++) {
+      var k = G.idx[c]; inside[k] = 1;
+      f[k] = state.result.hours[d * NC + c]; r[k] = state.result.reason[d * NC + c];
+    }
+    return { f: f, r: r, inside: inside };
+  }
+
+  // Bilinear inside a full quad; with exactly one masked corner, linear over the triangle of the
+  // other three (matplotlib contourf's default corner_mask=True does the same); else masked.
+  function interp(a, b, c, d, fx, fy) {
+    var na = a !== a, nb = b !== b, nc = c !== c, nd = d !== d, n = na + nb + nc + nd;
+    if (n === 0) return a * (1 - fx) * (1 - fy) + b * fx * (1 - fy) + c * (1 - fx) * fy + d * fx * fy;
+    if (n > 1) return NaN;
+    if (nd) return fx + fy <= 1 ? a + (b - a) * fx + (c - a) * fy : NaN;
+    if (na) return fx + fy >= 1 ? d + (c - d) * (1 - fx) + (b - d) * (1 - fy) : NaN;
+    if (nb) return fy >= fx ? a + (d - c) * fx + (c - a) * fy : NaN;
+    return fy <= fx ? a + (b - a) * fx + (d - b) * fy : NaN;  // nc
+  }
+
+  function drawField(ctx, s, L, fld) {
+    var px0 = Math.floor(L.left * s), py0 = Math.floor(L.top * s);
+    var pw = Math.ceil(L.w * s) + 1, ph = Math.ceil(L.h * s) + 1;
+    var img = ctx.createImageData(pw, ph), data = img.data;
+    var ramp = state.ramp, n = state.nRamp, gray = hexRgb(MP.no_data_color);
+    var nod = new Float32Array(G.ny * G.nx).fill(NaN);
+    for (var k = 0; k < nod.length; k++) if (fld.inside[k] && fld.f[k] !== fld.f[k]) nod[k] = 1;
+    var nx = G.nx, ny = G.ny;
+    for (var py = 0; py < ph; py++) {
+      var lat = Y1 - ((py0 + py + 0.5) / s - L.top) / L.h * (Y1 - Y0);
+      var gy = (lat - G.lat0) / G.cell, j = Math.floor(gy), fy = gy - j;
+      if (j < 0 || j >= ny - 1) continue;
+      for (var px = 0; px < pw; px++) {
+        var lon = X0 + ((px0 + px + 0.5) / s - L.left) / L.w * (X1 - X0);
+        var gx = (lon - G.lon0) / G.cell, i = Math.floor(gx), fx = gx - i;
+        if (i < 0 || i >= nx - 1) continue;
+        var ka = j * nx + i, kb = ka + 1, kc = ka + nx, kd = kc + 1, o = (py * pw + px) * 4;
+        var v = interp(fld.f[ka], fld.f[kb], fld.f[kc], fld.f[kd], fx, fy);
+        if (v === v) {
+          var band = v < 0.5 ? 0 : Math.min(n, Math.floor(v + 0.5));
+          if (band > 0) {
+            var col = ramp[band - 1];
+            data[o] = col[0]; data[o + 1] = col[1]; data[o + 2] = col[2]; data[o + 3] = Math.round(col[3] * 255);
+          }
+          continue;
+        }
+        var g = interp(nod[ka], nod[kb], nod[kc], nod[kd], fx, fy);
+        if (g === g) { data[o] = gray[0]; data[o + 1] = gray[1]; data[o + 2] = gray[2]; data[o + 3] = 255; }
+      }
+    }
+    var tmp = document.createElement("canvas"); tmp.width = pw; tmp.height = ph;
+    tmp.getContext("2d").putImageData(img, 0, 0);
+    ctx.drawImage(tmp, px0, py0);
+  }
+
+  function makeProj(s, L) {
+    return {
+      x: function (lon) { return (L.left + (lon - X0) / (X1 - X0) * L.w) * s; },
+      y: function (lat) { return (L.top + (Y1 - lat) / (Y1 - Y0) * L.h) * s; }
+    };
+  }
+  function tracePath(ctx, P, rings) {
+    ctx.beginPath();
+    rings.forEach(function (r) {
+      ctx.moveTo(P.x(r[0]), P.y(r[1]));
+      for (var i = 2; i < r.length; i += 2) ctx.lineTo(P.x(r[i]), P.y(r[i + 1]));
+      ctx.closePath();
+    });
+  }
+  function pt(s, points) { return points / 72 * s; }
+  function font(s, size, bold) { return (bold ? "bold " : "") + pt(s, size).toFixed(2) + "px \"DejaVu Sans\", \"Segoe UI\", Arial, sans-serif"; }
+  function stroke(ctx, P, rings, color, lwPt, s, dash) {
+    tracePath(ctx, P, rings);
+    ctx.strokeStyle = color; ctx.lineWidth = pt(s, lwPt);
+    ctx.setLineDash(dash ? dash.map(function (x) { return pt(s, x * lwPt); }) : []);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function drawLimitingLetters(ctx, s, P, fld) {
+    if (MP.show_limiting_factor === false) return false;
+    var nx = G.nx, ny = G.ny, blank = new Uint8Array(nx * ny), any = false;
+    for (var k = 0; k < blank.length; k++) if (fld.inside[k] && fld.f[k] === 0) { blank[k] = 1; any = true; }
+    if (!any) return false;
+    var red = MP.colors[MP.colors.length - 1], blue = MP.colors[0], drew = false;
+    ctx.font = font(s, 4.3, true); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    for (var y = 0; y < ny; y += 3) {
+      for (var x = 0; x < nx; x += 3) {
+        var k2 = y * nx + x;
+        if (!blank[k2] || fld.r[k2] < 0) continue;
+        var sum = 0;  // uniform_filter(size=5, mode="constant", cval=0)
+        for (var dy = -2; dy <= 2; dy++) for (var dx = -2; dx <= 2; dx++) {
+          var yy = y + dy, xx = x + dx;
+          if (yy >= 0 && yy < ny && xx >= 0 && xx < nx) sum += blank[yy * nx + xx];
+        }
+        if (sum / 25 < 0.75) continue;
+        var code = fld.r[k2];
+        ctx.fillStyle = RED_UP[code] ? red : blue;
+        ctx.fillText(REASON_LABEL[code], P.x(G.lon0 + x * G.cell), P.y(G.lat0 + y * G.cell));
+        drew = true;
+      }
+    }
+    return drew;
+  }
+
+  function drawCities(ctx, s, P, L) {
+    if (MP.show_cities === false) return;
+    var minPop = Number(MP.city_min_population || 0);
+    var cand = B.cities.filter(function (c) {
+      return c.lon > X0 && c.lon < X1 && c.lat > Y0 && c.lat < Y1 && (c.state === "California" || c.population >= minPop);
+    }).sort(function (a, b) { return b.population - a.population; });
+    var minSep = 24 / 150 * s, placed = [];
+    ctx.font = font(s, 5.5); ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    cand.forEach(function (c) {
+      var x = P.x(c.lon), y = P.y(c.lat);
+      for (var i = 0; i < placed.length; i++) {
+        var dx = x - placed[i][0], dy = y - placed[i][1];
+        if (dx * dx + dy * dy < minSep * minSep) return;
+      }
+      placed.push([x, y]);
+      ctx.fillStyle = "#1a1a1a";
+      ctx.beginPath(); ctx.arc(x, y, pt(s, 1.1), 0, 2 * Math.PI); ctx.fill();
+      var label = "  " + c.name;
+      if (MP.city_label_halo !== false) {
+        ctx.strokeStyle = "#ffffff"; ctx.lineWidth = pt(s, 2); ctx.strokeText(label, x, y);
+      }
+      ctx.fillText(label, x, y);
+    });
+  }
+
+  function drawColorbar(ctx, s, L, drewLetters) {
+    var n = state.nRamp, cl = L.left + L.w + CBAR_GAP, inset = L.h * CBAR_VINSET;
+    var top = (L.top + inset) * s, h = (L.h - 2 * inset) * s, x = cl * s, w = CBAR_W * s;
+    var span = n + 1;  // levels -0.5 .. n+0.5
+    function yOf(v) { return top + h - (v + 0.5) / span * h; }
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(x, top, w, h);
+    for (var b = 1; b <= n; b++) {
+      ctx.fillStyle = rgba(state.ramp[b - 1]);
+      var y1 = yOf(b + 0.5), y2 = yOf(b - 0.5);
+      ctx.fillRect(x, y1, w, y2 - y1 + 0.5);
+    }
+    ctx.strokeStyle = "#000"; ctx.lineWidth = pt(s, 0.5); ctx.strokeRect(x, top, w, h);
+    var ticks = [0, 1].concat([4, 8, 12, 16, 20, 24].filter(function (t) { return t <= n; }));
+    if (ticks.indexOf(n) < 0) ticks.push(n);
+    ctx.fillStyle = "#000"; ctx.font = font(s, 7.5); ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ticks.forEach(function (t) {
+      var y = yOf(t);
+      ctx.beginPath(); ctx.moveTo(x + w, y); ctx.lineTo(x + w + pt(s, 3.5), y); ctx.stroke();
+      ctx.fillText(String(t), x + w + pt(s, 5), y);
+    });
+    ctx.save();
+    ctx.translate(x + w + pt(s, 20), top + h / 2); ctx.rotate(-Math.PI / 2);
+    ctx.font = font(s, 8); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("Hours in prescription per day", 0, 0);
+    ctx.restore();
+    ctx.fillStyle = "#555555"; ctx.font = font(s, 7); ctx.textAlign = "center";
+    ctx.textBaseline = "top"; ctx.fillText("0 = no color", x + w / 2, top + h + 0.025 * h);
+    ctx.textBaseline = "bottom"; ctx.fillText("cold → warm", x + w / 2, top - 0.02 * h);
+    if (drewLetters) {
+      var red = MP.colors[MP.colors.length - 1], blue = MP.colors[0], cx = x + w / 2, y0 = (L.top + 0.04) * s;
+      ctx.textBaseline = "top";
+      ctx.font = font(s, 5.5, true); ctx.fillStyle = "#333333"; ctx.fillText("Why blank?", cx, y0);
+      ctx.font = font(s, 5, true);
+      ctx.fillStyle = red; ctx.fillText("Red = hot/dry/", cx, y0 + 0.11 * s); ctx.fillText("windy/gusty", cx, y0 + 0.19 * s);
+      ctx.fillStyle = blue; ctx.fillText("Blue = cold/", cx, y0 + 0.30 * s); ctx.fillText("moist/calm", cx, y0 + 0.38 * s);
+    }
+  }
+
+  function fitText(ctx, text, maxW, size, floor, s, bold) {
+    while (size > floor) { ctx.font = font(s, size, bold); if (ctx.measureText(text).width <= maxW) break; size -= 0.5; }
+    ctx.font = font(s, size, bold);
+  }
+
+  function drawHeaderFooter(ctx, s, W, H, withLogos) {
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, HEADER * s); ctx.fillRect(0, H - FOOTER * s, W, FOOTER * s);
+    var lh = (HEADER - 2 * BAR_PAD) * s, leftRes = 0, rightRes = 0;
+    var nops = withLogos && state.logos.nops, ps = withLogos && state.logos.ps;
+    if (nops) { var lw = lh * nops.naturalWidth / nops.naturalHeight; ctx.drawImage(nops, BAR_PAD * s, BAR_PAD * s, lw, lh); leftRes = lw + 0.15 * s; }
+    if (ps) { var rw = lh * ps.naturalWidth / ps.naturalHeight; ctx.drawImage(ps, W - BAR_PAD * s - rw, BAR_PAD * s, rw, lh); rightRes = rw + 0.15 * s; }
+    ctx.fillStyle = "#fff"; ctx.textBaseline = "middle";
+    ctx.font = font(s, 8.5); ctx.textAlign = "right";
+    var issuedX = W - 0.012 * W - rightRes;
+    ctx.fillText(D.issued_text, issuedX, HEADER * s / 2);
+    var issuedW = ctx.measureText(D.issued_text).width;
+    var titleX = 0.012 * W + leftRes;
+    fitText(ctx, D.title, issuedX - issuedW - 0.2 * s - titleX, 11.5, 6.5, s, true);
+    ctx.textAlign = "left"; ctx.fillText(D.title, titleX, HEADER * s / 2);
+    ctx.font = font(s, 6.5); ctx.textAlign = "center";
+    ctx.fillText("Data Source: Open-Meteo (" + D.model + ")    Boundaries: Natural Earth    Custom Rx viewer: " +
+      (location.hostname || "local file"), W / 2, H - FOOTER * s / 2);
+  }
+
+  function drawPage(ctx, W, H, withLogos) {
+    var s = W / PAGE_W, L = computeLayout(), P = makeProj(s, L), d = state.day;
+    state.layout = { s: s, L: L };
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, H);
+    var fld = dayField(d);
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(L.left * s, L.top * s, L.w * s, L.h * s); ctx.clip();
+    ctx.fillStyle = MP.water_color || "#ffffff"; ctx.fillRect(L.left * s, L.top * s, L.w * s, L.h * s);
+    tracePath(ctx, P, B.land); ctx.fillStyle = MP.land_color; ctx.fill("evenodd");
+    drawField(ctx, s, L, fld);
+    if (MP.show_counties !== false) stroke(ctx, P, B.counties, "#a8a8a8", 0.3, s);
+    var drewLetters = drawLimitingLetters(ctx, s, P, fld);
+    B.countries.forEach(function (c) { stroke(ctx, P, c.rings, "#555555", 0.8, s); });
+    B.states.forEach(function (st) { if (st.postal !== "CA") stroke(ctx, P, st.rings, "#8a8a8a", 0.5, s); });
+    stroke(ctx, P, B.domain, "#666666", 0.6, s, [3.7, 1.6]);
+    stroke(ctx, P, B.california, "#111111", 1.5, s);
+    if (MP.watermark && MP.watermark_text) {
+      ctx.save();
+      ctx.translate((L.left + L.w / 2) * s, (L.top + L.h / 2) * s); ctx.rotate(-Math.PI / 6);
+      ctx.font = font(s, 42, true); ctx.fillStyle = "rgba(0,0,0,0.12)"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(MP.watermark_text, 0, 0);
+      ctx.restore();
+    }
+    ctx.restore();
+
+    // Labels are NOT clipped to the map frame -- same as matplotlib's own ax.text default.
+    ctx.font = font(s, 8, true); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "rgba(51,51,51,0.75)";
+    B.states.forEach(function (st) {
+      if (st.label_lon > X0 && st.label_lon < X1 && st.label_lat > Y0 && st.label_lat < Y1) ctx.fillText(st.postal, P.x(st.label_lon), P.y(st.label_lat));
+    });
+    B.countries.forEach(function (c) { if (c.name === "Mexico") ctx.fillText("MEXICO", P.x(c.label_lon), P.y(c.label_lat)); });
+    drawCities(ctx, s, P, L);
+
+    drawColorbar(ctx, s, L, drewLetters);
+
+    // Subtitle: prescription identity + day (a downloaded PNG says exactly which Rx it shows).
+    var sub = state.label + ": " + rxText(state.rx) + " · " + minToHHMM(state.opStart) + "–" + minToHHMM(state.opEnd) +
+      "  ·  Day " + (d + 1) + " of " + ND + " — " + fmtDate(D.dates[d], { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+    ctx.fillStyle = "#555555"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    fitText(ctx, sub, W - 0.3 * s, 8.5, 5, s, false);
+    ctx.fillText(sub, W / 2, H - (FOOTER + MAP_MARGIN + SUBTITLE / 2) * s);
+
+    drawHeaderFooter(ctx, s, W, H, withLogos);
+  }
+
+  function render() {
+    if (!state.result) return;
+    drawPage(els.canvas.getContext("2d"), els.canvas.width, els.canvas.height, true);
+    drawOverlay();
+    updateReadouts();
+    renderDetail();
+  }
+
+  // ------------------------------------------------------------------ readouts, pills, stats
+  function dayStats(d) {
+    var withData = 0, ge1 = 0, ge8 = 0, mx = 0;
+    for (var c = 0; c < NC; c++) {
+      var v = state.result.hours[d * NC + c];
+      if (v !== v) continue;
+      withData++; if (v >= 1) ge1++; if (v >= 8) ge8++; if (v > mx) mx = v;
+    }
+    return { withData: withData, ge1: ge1, ge8: ge8, max: mx };
+  }
+  function updateReadouts() {
+    var d = state.day, st = dayStats(d);
+    els.frameReadout.textContent = "Day " + (d + 1) + " • " + fmtDate(D.dates[d], { weekday: "short", month: "short", day: "numeric", year: "numeric" }) + " • " + (d + 1) + "/" + ND;
+    var p1 = st.withData ? Math.round(100 * st.ge1 / st.withData) : 0, p8 = st.withData ? Math.round(100 * st.ge8 / st.withData) : 0;
+    els.statsText.textContent = "Grid " + G.cell + "° (" + NC.toLocaleString() + " land cells) • ≥1h: " + st.ge1.toLocaleString() +
+      " (" + p1 + "%) • ≥8h: " + st.ge8.toLocaleString() + " (" + p8 + "%) • max: " + st.max + "h of " + state.achievable;
+    els.scrubber.value = d;
+    Array.prototype.forEach.call(els.dayPills.children, function (p, i) {
+      p.setAttribute("aria-selected", String(i === d));
+      var s2 = dayStats(i);
+      p.title = fmtDate(D.dates[i]) + " — " + s2.ge1 + " cells with ≥1 h";
+    });
+  }
+  function buildDayPills() {
+    D.dates.forEach(function (iso, i) {
+      var b = document.createElement("button");
+      b.className = "pill"; b.type = "button"; b.setAttribute("role", "tab"); b.textContent = "D" + (i + 1);
+      b.addEventListener("click", function () { stopPlayback(); setDay(i); });
+      els.dayPills.appendChild(b);
+    });
+    els.scrubber.max = ND - 1;
+  }
+  function setDay(d) { state.day = ((d % ND) + ND) % ND; render(); updateHash(); }
+
+  // ------------------------------------------------------------------ cell pick + hourly detail
+  function cellAt(evt) {
+    if (!state.layout) return -1;
+    var rect = els.overlay.getBoundingClientRect(), s = els.canvas.width / PAGE_W, L = state.layout.L;
+    var xin = (evt.clientX - rect.left) * (els.canvas.width / rect.width) / s;
+    var yin = (evt.clientY - rect.top) * (els.canvas.height / rect.height) / s;
+    if (xin < L.left || xin > L.left + L.w || yin < L.top || yin > L.top + L.h) return -1;
+    var lon = X0 + (xin - L.left) / L.w * (X1 - X0), lat = Y1 - (yin - L.top) / L.h * (Y1 - Y0);
+    var i = Math.round((lon - G.lon0) / G.cell), j = Math.round((lat - G.lat0) / G.cell);
+    if (i < 0 || i >= G.nx || j < 0 || j >= G.ny) return -1;
+    return cellOfGrid[j * G.nx + i];
+  }
+  var cellOfGrid = new Int32Array(G.ny * G.nx).fill(-1);
+  G.idx.forEach(function (k, c) { cellOfGrid[k] = c; });
+  function cellLatLon(c) { var k = G.idx[c]; return [G.lat0 + Math.floor(k / G.nx) * G.cell, G.lon0 + (k % G.nx) * G.cell]; }
+  function llText(c) { var ll = cellLatLon(c); return ll[0].toFixed(2) + "°N " + Math.abs(ll[1]).toFixed(2) + "°W"; }
+
+  function drawOverlay() {
+    var ctx = els.overlay.getContext("2d");
+    ctx.clearRect(0, 0, els.overlay.width, els.overlay.height);
+    if (state.selCell < 0 || !state.layout) return;
+    var s = state.layout.s, P = makeProj(s, state.layout.L), ll = cellLatLon(state.selCell);
+    var x = P.x(ll[1]), y = P.y(ll[0]), r = pt(s, 5);
+    ctx.lineWidth = pt(s, 1.6); ctx.strokeStyle = "#ffffff";
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.stroke();
+    ctx.lineWidth = pt(s, 0.9); ctx.strokeStyle = "#000000";
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.stroke();
+  }
+
+  function renderDetail() {
+    var c = state.selCell;
+    if (c < 0) { els.detail.hidden = true; return; }
+    els.detail.hidden = false;
+    var d = state.day, use = limitsUsed(state.rx), h = state.result.hours[d * NC + c];
+    els.detailTitle.textContent = llText(c) + " — " + (h !== h ? "no data" : h + " h in prescription");
+    els.detailSub.textContent = "Day " + (d + 1) + ", " + fmtDate(D.dates[d]) + " · shaded columns are outside " +
+      minToHHMM(state.opStart) + "–" + minToHHMM(state.opEnd);
+    var rows = { hour: [], temp: [], rh: [], wind: [], gust: [], blh: [], ok: [] };
+    for (var t = 0; t < NT; t++) {
+      if (tDay[t] !== d) continue;
+      var off = tMin[t] < state.opStart || tMin[t] >= state.opEnd, r = evalHour(state.rx, use, c, t);
+      var cls = off ? " off" : "", dir = r.dir || {};
+      function cell(v, digits, key) {
+        // Same red/blue language as the map letters (RED_UP): red = the fire-active direction,
+        // which for RH is too LOW (dry), not too high.
+        var up = key === "rh" ? dir[key] < 0 : dir[key] > 0;
+        var k = dir[key] ? (up ? "hi" : "lo") : "";
+        return "<td class=\"" + (off ? "" : k) + cls + "\">" + (v == null ? "—" : v.toFixed(digits)) + "</td>";
+      }
+      rows.hour.push("<th scope=\"col\" class=\"" + cls + "\">" + times[t].slice(11, 13) + "</th>");
+      rows.temp.push(cell(r.v.temp, 0, "temp"));
+      rows.rh.push(cell(r.v.rh, 0, "rh"));
+      rows.wind.push(cell(r.v.wind, 0, "wind"));
+      rows.gust.push(cell(r.v.gust, 0, "gust"));
+      rows.blh.push("<td class=\"" + (off ? "" : (dir.blh ? "lo" : "")) + cls + "\">" +
+        (r.v.blh == null ? "—" : (Math.round(r.v.blh * M_TO_FT / 100) / 10).toFixed(1)) + "</td>");
+      rows.ok.push(off ? "<td class=\"off\">·</td>" : (!r.usable ? "<td class=\"fail\">n/a</td>" :
+        (r.pass ? "<td class=\"pass\">✓</td>" : "<td class=\"fail\">✗</td>")));
+    }
+    els.detailTable.innerHTML =
+      "<thead><tr><th scope=\"row\">Hour</th>" + rows.hour.join("") + "</tr></thead><tbody>" +
+      "<tr><th scope=\"row\">Temp °F</th>" + rows.temp.join("") + "</tr>" +
+      "<tr><th scope=\"row\">RH %</th>" + rows.rh.join("") + "</tr>" +
+      "<tr><th scope=\"row\">Wind mph</th>" + rows.wind.join("") + "</tr>" +
+      "<tr><th scope=\"row\">Gust mph</th>" + rows.gust.join("") + "</tr>" +
+      "<tr><th scope=\"row\">Mix ht kft</th>" + rows.blh.join("") + "</tr>" +
+      "<tr><th scope=\"row\">In Rx</th>" + rows.ok.join("") + "</tr></tbody>";
+  }
+
+  els.overlay.addEventListener("mousemove", function (e) {
+    var c = cellAt(e);
+    if (c < 0) { els.cursorLine.textContent = "Click a cell for its hour-by-hour breakdown."; return; }
+    var h = state.result.hours[state.day * NC + c];
+    els.cursorLine.textContent = llText(c) + " · " + (h !== h ? "no data" : h + " h in prescription") + " — click for hourly detail";
+  });
+  els.overlay.addEventListener("click", function (e) {
+    var c = cellAt(e);
+    state.selCell = c === state.selCell ? -1 : c;
+    drawOverlay(); renderDetail(); updateHash();
+  });
+
+  // ------------------------------------------------------------------ playback
+  function speedToMs(v) { var t = (v - 1) / 9; return Math.round(2500 - t * 2250); }
+  function stopPlayback() {
+    state.playing = false; els.btnPlay.dataset.playing = "false"; els.btnPlay.innerHTML = "&#9654;";
+    if (state.timer) { clearInterval(state.timer); state.timer = null; }
+  }
+  function startPlayback() {
+    state.playing = true; els.btnPlay.dataset.playing = "true"; els.btnPlay.innerHTML = "&#10074;&#10074;";
+    if (state.timer) clearInterval(state.timer);
+    state.timer = setInterval(function () { setDay(state.day + (state.reverse ? -1 : 1)); }, speedToMs(Number(els.speedSlider.value)));
+  }
+  $("btnFirst").addEventListener("click", function () { stopPlayback(); setDay(0); });
+  $("btnLast").addEventListener("click", function () { stopPlayback(); setDay(ND - 1); });
+  $("btnPrev").addEventListener("click", function () { stopPlayback(); setDay(state.day - 1); });
+  $("btnNext").addEventListener("click", function () { stopPlayback(); setDay(state.day + 1); });
+  els.btnPlay.addEventListener("click", function () { if (state.playing) stopPlayback(); else startPlayback(); });
+  els.btnReverse.addEventListener("click", function () {
+    state.reverse = !state.reverse; els.btnReverse.setAttribute("aria-pressed", String(state.reverse));
+    if (state.playing) startPlayback();
+  });
+  els.scrubber.addEventListener("input", function () { stopPlayback(); setDay(Number(els.scrubber.value)); });
+  els.speedSlider.addEventListener("input", function () { if (state.playing) startPlayback(); });
+  document.addEventListener("keydown", function (e) {
+    var tag = e.target && e.target.tagName;
+    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+    if (e.key === " ") { e.preventDefault(); if (state.playing) stopPlayback(); else startPlayback(); }
+    else if (e.key === "ArrowLeft") { stopPlayback(); setDay(state.day - 1); }
+    else if (e.key === "ArrowRight") { stopPlayback(); setDay(state.day + 1); }
+    else if (e.key === "Home") { stopPlayback(); setDay(0); }
+    else if (e.key === "End") { stopPlayback(); setDay(ND - 1); }
+  });
+
+  // ------------------------------------------------------------------ Rx editing, save/share
+  function toast(msg) { els.toast.textContent = msg; clearTimeout(toast.t); toast.t = setTimeout(function () { els.toast.textContent = ""; }, 3500); }
+  RX_FIELDS.forEach(function (f) {
+    $(f).addEventListener("input", function () {
+      var p = presetFor(els.presetSelect.value);
+      if (p && !sameRx(p.rx, readInputs())) { els.presetSelect.value = "custom"; els.btnDelete.hidden = true; }
+      scheduleRecompute();
+    });
+  });
+  els.opStart.addEventListener("change", function () { state.opStart = Number(els.opStart.value); recompute(); });
+  els.opEnd.addEventListener("change", function () { state.opEnd = Number(els.opEnd.value); recompute(); });
+  els.presetSelect.addEventListener("change", function () {
+    var p = presetFor(els.presetSelect.value);
+    els.btnDelete.hidden = els.presetSelect.value.indexOf("u:") !== 0;
+    if (!p) return;
+    writeInputs(p.rx);
+    if (p.op) { state.opStart = p.op[0]; state.opEnd = p.op[1]; els.opStart.value = state.opStart; els.opEnd.value = state.opEnd; }
+    recompute();
+  });
+  $("btnSave").addEventListener("click", function () {
+    var name = window.prompt("Name this prescription (saved in this browser only):", state.label === "Custom" ? "" : state.label + " (copy)");
+    if (!name || !name.trim()) return;
+    name = name.trim();
+    var list = loadSaved().filter(function (s) { return s.name !== name; });
+    list.push({ name: name, rx: readInputs(), op: [state.opStart, state.opEnd] });
+    if (!storeSaved(list)) { toast("This browser blocked saving; use COPY LINK instead."); return; }
+    buildPresetSelect("u:" + (list.length - 1));
+    recompute(); toast("Saved “" + name + "”.");
+  });
+  els.btnDelete.addEventListener("click", function () {
+    var v = els.presetSelect.value; if (v.indexOf("u:") !== 0) return;
+    var list = loadSaved(), i = Number(v.slice(2)), name = list[i] && list[i].name;
+    if (!window.confirm("Delete saved prescription “" + name + "”?")) return;
+    list.splice(i, 1); storeSaved(list); buildPresetSelect("custom"); recompute(); toast("Deleted “" + name + "”.");
+  });
+  $("btnShare").addEventListener("click", function () {
+    updateHash();
+    var url = location.href;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(function () { toast("Link copied — it opens this exact prescription."); },
+        function () { window.prompt("Copy this link:", url); });
+    } else window.prompt("Copy this link:", url);
+  });
+
+  // ------------------------------------------------------------------ exports
+  function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "custom"; }
+  function download(blob, name) {
+    var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+  $("btnPng").addEventListener("click", function () {
+    // Fixed 150-dpi page, same pixel size as the pipeline's own PNGs.
+    var cv = document.createElement("canvas"); cv.width = Math.round(PAGE_W * 150); cv.height = Math.round(PAGE_H * 150);
+    var name = "CA_RxHours_" + slug(state.label) + "_Day" + (state.day + 1) + ".png";
+    function go(withLogos) {
+      drawPage(cv.getContext("2d"), cv.width, cv.height, withLogos);
+      try { cv.toBlob(function (b) { download(b, name); }); }
+      catch (e) { if (withLogos) go(false); }  // file:// taints the canvas with local logo images
+      state.layout = null; render();
+    }
+    go(true);
+  });
+  $("btnCsv").addEventListener("click", function () {
+    var lines = ["# " + state.label + ": " + rxText(state.rx) + " | hours " + minToHHMM(state.opStart) + "-" + minToHHMM(state.opEnd) + " | " + D.issued_text,
+                 ["lat", "lon"].concat(D.dates.map(function (d) { return "hours_" + d; })).join(",")];
+    for (var c = 0; c < NC; c++) {
+      var ll = cellLatLon(c), row = [ll[0].toFixed(4), ll[1].toFixed(4)];
+      for (var d = 0; d < ND; d++) { var v = state.result.hours[d * NC + c]; row.push(v !== v ? "" : String(v)); }
+      lines.push(row.join(","));
+    }
+    download(new Blob([lines.join("\n") + "\n"], { type: "text/csv" }), "rx_hours_" + slug(state.label) + ".csv");
+  });
+
+  // ------------------------------------------------------------------ init
+  function loadLogo(key, src) {
+    var im = new Image();
+    im.onload = function () { state.logos[key] = im; render(); };
+    im.src = src;
+  }
+
+  $("issuedReadout").textContent = D.issued_text;
+  $("sourceText").textContent = "Data source: Open-Meteo forecast API, model " + D.model + ". Grid " + G.cell +
+    "°, California + " + D.buffer_deg + "° land buffer (dashed). Boundaries: Natural Earth.";
+  $("stdLink").hidden = !/custom\.html$/i.test(location.pathname);
+  buildOpSelects();
+  buildDayPills();
+
+  var fromHash = readHash(), defKey = D.default_scenario;
+  var def = D.scenarios.filter(function (s) { return s.key === defKey; })[0] || D.scenarios[0];
+  if (fromHash) {
+    writeInputs(fromHash.rx);
+    if (fromHash.op) { state.opStart = fromHash.op[0]; state.opEnd = fromHash.op[1]; }
+    state.day = Math.min(fromHash.day || 0, ND - 1);
+    if (fromHash.cell) {
+      var ci = Math.round((fromHash.cell[1] - G.lon0) / G.cell), cj = Math.round((fromHash.cell[0] - G.lat0) / G.cell);
+      if (ci >= 0 && ci < G.nx && cj >= 0 && cj < G.ny) state.selCell = cellOfGrid[cj * G.nx + ci];
+    }
+    var match = D.scenarios.filter(function (s) { return sameRx(s.prescription, fromHash.rx); })[0];
+    buildPresetSelect(match ? "s:" + match.key : "custom");
+  } else {
+    writeInputs(def.prescription);
+    buildPresetSelect("s:" + def.key);
+  }
+  els.opStart.value = state.opStart; els.opEnd.value = state.opEnd;
+
+  $("loadState").hidden = true;
+  $("console").hidden = false;
+  sizeCanvases();
+  recompute();
+  loadLogo("nops", "NOPS_logo.png");
+  loadLogo("ps", "PSLogo.png");
+  var resizeTimer = null;
+  window.addEventListener("resize", function () { clearTimeout(resizeTimer); resizeTimer = setTimeout(function () { sizeCanvases(); render(); }, 150); });
+})();
+</script>
+</body>
+</html>
