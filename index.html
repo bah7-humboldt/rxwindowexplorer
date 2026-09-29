@@ -155,6 +155,21 @@
 
   .loadstate { font-size: 13px; color: var(--text-dim); text-align: center; padding: 40px 24px; }
 
+  .citeWrap { max-width: 1180px; margin: 0 auto; padding: 0 10px 16px; box-sizing: border-box; }
+  details.citeBar {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px;
+  }
+  details.citeBar summary {
+    font-size: 12.5px; font-weight: 700; cursor: pointer; color: var(--text); list-style: revert;
+  }
+  details.citeBar summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .citeBody { font-size: 12px; line-height: 1.6; color: var(--text-dim); margin-top: 10px; }
+  .citeBody p { margin: 0 0 10px; }
+  .citeBody p:last-child { margin-bottom: 0; }
+  .citeBody strong { color: var(--text); }
+  .citeBody a { color: var(--accent); overflow-wrap: anywhere; }
+  .citeList { margin: 0 0 10px; padding-left: 18px; }
+  .citeList li { margin-bottom: 4px; }
   @media (max-width: 760px) {
     .console { flex-direction: column; }
     .sideCol { flex: 1 1 auto; width: 100%; }
@@ -219,6 +234,9 @@
           <label for="vent_min_ft">Mixing ht <small>ft</small></label>
           <input type="number" id="vent_min_ft" step="100" inputmode="decimal" aria-label="Mixing height minimum, ft">
           <span class="na">&mdash;</span>
+          <label for="days_since_rain_min" title="Days since the last day with at least 0.10 in of precipitation (0 = rain that day)">Since rain <small>days</small></label>
+          <input type="number" id="days_since_rain_min" step="1" min="0" inputmode="numeric" aria-label="Days since wetting rain minimum">
+          <input type="number" id="days_since_rain_max" step="1" min="0" inputmode="numeric" aria-label="Days since wetting rain maximum">
         </div>
         <div class="opRow">
           <label for="opStart">Hours</label>
@@ -268,15 +286,59 @@
       <div class="metaBlock">
         <p class="hint mono" id="statsText"></p>
         <p class="hint">Uncolored land = 0 hours; gray = no forecast data. Letters in large blank areas
-          mark the limit that failed most hours (T/RH/W/G/V): red = too hot/dry/windy/gusty,
-          blue = too cold/moist/calm or mixing height too low.</p>
+          mark the limit that failed most hours (T/RH/W/G/V, P = days since wetting rain): red = too
+          hot/dry/windy/gusty or too long since rain, blue = too cold/moist/calm, mixing height too
+          low, or rain too recent.</p>
+        <p class="hint">Days since wetting rain counts back to the last day with &ge;&nbsp;0.10&nbsp;in of
+          precipitation (snow as water; 0 = rain that day). A whole-day value, so it passes or fails
+          every hour of a day alike.</p>
         <p class="hint">Wind is the model's 10-m wind (roughly 15&ndash;20% above 20-ft wind); mixing
           height is the model boundary-layer height. Saved prescriptions stay in this browser only.</p>
         <p class="hint" id="sourceText"></p>
+        <p class="hint">Prescription scenarios: Worsnop et al. 2026, <em>Fire Ecology</em> 22:51.
+          Rain: gridMET. <a href="#citations" id="citeLink">Citations &darr;</a></p>
         <p class="hint">Space play &middot; &larr;/&rarr; step &middot; Home/End &middot;
           <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> CC-BY-4.0</p>
       </div>
     </aside>
+  </div>
+
+  <!-- Citations dropdown (2026-09-29, analyst request): a full-width collapsible bar under the
+       console, the same <details> pattern as the NFDRS OVF viewer's "How to interpret these
+       charts". The side panel keeps a one-line credit that links here. -->
+  <div class="citeWrap">
+    <details class="citeBar" id="citations">
+      <summary>Citations and data sources</summary>
+      <div class="citeBody">
+        <p><strong>Prescription scenarios and the days-since-wetting-rain limit</strong> are built on the
+          work of Rochelle Worsnop and co-authors, who paired 15,468 Northern California burn permits
+          (PFIRS, 2011&ndash;2024) with the weather on each burn day and published the range of conditions
+          practitioners actually burned under, by month, burn type, vegetation and elevation. The Timber,
+          Grass/Shrub and Pile presets draw on their burn-day criteria, with input from California
+          burners' own burn plan prescriptions.</p>
+        <ul class="citeList">
+          <li>Worsnop, R.P., A. Hoell, B.J. Hatchett, T.B. Chapman, M.L. Breeden, Z. Tolby, K.C. Short and
+            M. Hobbins. 2026. Characterizing windows of opportunity for prescribed pile and broadcast
+            burning in Northern California. <em>Fire Ecology</em> 22:51.
+            <a href="https://doi.org/10.1186/s42408-026-00492-6" target="_blank" rel="noopener">https://doi.org/10.1186/s42408-026-00492-6</a></li>
+          <li>Holden, Z.A., A. Swanson, C.H. Luce, W.M. Jolly, M. Maneta, J.W. Oyler, D.A. Warren, R. Parsons
+            and D. Affleck. 2018. Decreasing fire season precipitation increased recent western US forest
+            wildfire activity. <em>PNAS</em> 115(36):E8349&ndash;E8357 &mdash; the 0.10&nbsp;in (2.54&nbsp;mm)
+            wetting-rain threshold, as used by Worsnop et al.</li>
+          <li><strong>Observed precipitation:</strong>
+            <a href="https://www.climatologylab.org/gridmet.html" target="_blank" rel="noopener">gridMET</a>
+            (daily, 4&nbsp;km). Abatzoglou, J.T. 2013. Development of gridded surface meteorological data for
+            ecological applications and modelling. <em>International Journal of Climatology</em>
+            33:121&ndash;131. <a href="https://doi.org/10.1002/joc.3413" target="_blank" rel="noopener">https://doi.org/10.1002/joc.3413</a></li>
+          <li><strong>Forecast weather:</strong> <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>
+            forecast API (NOAA GFS/NBM/HRRR blend), CC-BY-4.0.</li>
+          <li><strong>Boundaries and cities:</strong>
+            <a href="https://www.naturalearthdata.com" target="_blank" rel="noopener">Natural Earth</a> (public domain).</li>
+        </ul>
+        <p>Experimental planning aid: model forecasts scored against generalized prescriptions. It is not
+          a substitute for a burn plan's own prescription or a spot weather forecast.</p>
+      </div>
+    </details>
   </div>
 
   <div class="loadstate" id="loadState">Loading forecast data&hellip;</div>
@@ -286,6 +348,9 @@
 <script>
 (function () {
   "use strict";
+  // "Citations" link in the side panel opens the dropdown it jumps to.
+  var citeLink = document.getElementById("citeLink");
+  if (citeLink) citeLink.addEventListener("click", function () { document.getElementById("citations").open = true; });
 
   var D = window.__RX_DATA__, B = window.__RX_BOUNDARIES__;
   var $ = function (id) { return document.getElementById(id); };
@@ -297,13 +362,17 @@
 
   // ------------------------------------------------------------------ constants (rx_window_forecast.py)
   var M_TO_FT = 3.28084;
-  var LIMITS = ["temp", "rh", "wind", "gust", "vent"];
-  var LIMIT_SUBKEYS = { temp: [0, 1], rh: [2, 3], wind: [4, 5], gust: [6], vent: [7] };
-  // REASON_SUBKEYS order: temp_high, temp_low, rh_low, rh_high, wind_high, wind_low, gust_high, vent_low
-  var REASON_LABEL = ["T", "T", "RH", "RH", "W", "W", "G", "V"];
-  var RED_UP = [true, false, true, false, true, false, true, false];
+  var LIMITS = ["temp", "rh", "wind", "gust", "vent", "rain"];
+  var LIMIT_SUBKEYS = { temp: [0, 1], rh: [2, 3], wind: [4, 5], gust: [6], vent: [7], rain: [8, 9] };
+  // REASON_SUBKEYS order: temp_high, temp_low, rh_low, rh_high, wind_high, wind_low, gust_high, vent_low,
+  // rain_high, rain_low
+  var N_SUBKEYS = 10;
+  var REASON_LABEL = ["T", "T", "RH", "RH", "W", "W", "G", "V", "P", "P"];
+  var RED_UP = [true, false, true, false, true, false, true, false, true, false];
+  var LETTER_KEY = [["T", "temperature"], ["RH", "humidity"], ["W", "wind"], ["G", "gust"],
+                    ["V", "mixing height"], ["P", "days since rain"]];
   var RX_FIELDS = ["temp_min_f", "temp_max_f", "rh_min_pct", "rh_max_pct", "wind_min_mph",
-                   "wind_max_mph", "gust_max_mph", "vent_min_ft"];
+                   "wind_max_mph", "gust_max_mph", "vent_min_ft", "days_since_rain_min", "days_since_rain_max"];
   var PAGE_W = 7.5, PAGE_H = 7.9, HEADER = 0.42, FOOTER = 0.20, BAR_PAD = 0.06;
   var MAP_MARGIN = 0.1, MAP_LEFT = 0.15, CBAR_GAP = 0.3, CBAR_W = 0.26, CBAR_LABEL = 0.55,
       CBAR_RIGHT = 0.1, CBAR_VINSET = 0.12, SUBTITLE = 0.22;
@@ -336,8 +405,18 @@
       rh: rx.rh_min_pct != null || rx.rh_max_pct != null,
       wind: rx.wind_min_mph != null || rx.wind_max_mph != null,
       gust: rx.gust_max_mph != null,
-      vent: rx.vent_min_ft != null
+      vent: rx.vent_min_ft != null,
+      rain: rx.days_since_rain_min != null || rx.days_since_rain_max != null
     };
+  }
+  // Days since wetting rain for cell c on forecast day d (rx_web_export._rain_payload): null =
+  // unknown; a censored count is a lower bound ("N+"), compared as N like score_location does.
+  var RAIN = D.rain || { lookback_days: null, days: [], censored: [] };
+  function rainDays(c, d) { var r = RAIN.days[c]; return r && r[d] != null ? r[d] : null; }
+  function rainText(c, d) {
+    var v = rainDays(c, d);
+    if (v == null) return "unknown";
+    return v + (RAIN.censored[c] && RAIN.censored[c][d] ? "+" : "") + (v === 1 ? " day" : " days");
   }
   function within(v, lo, hi) { return (lo == null || v >= lo) && (hi == null || v <= hi); }
   function dirn(v, lo, hi) { return (hi != null && v > hi) ? 1 : ((lo != null && v < lo) ? -1 : 0); }
@@ -349,9 +428,10 @@
   // Evaluate one hour; returns null (unusable), or {pass, fails:[subkey codes], v:{...}}.
   function evalHour(rx, use, c, t) {
     var T = val("temp", c, t), RH = val("rh", c, t), W = val("wind", c, t), Gu = val("gust", c, t), Bl = val("blh", c, t);
-    var v = { temp: T, rh: RH, wind: W, gust: Gu, blh: Bl };
+    var Rn = tDay[t] >= 0 ? rainDays(c, tDay[t]) : null;
+    var v = { temp: T, rh: RH, wind: W, gust: Gu, blh: Bl, rain: Rn };
     if ((use.temp && T == null) || (use.rh && RH == null) || (use.wind && W == null) ||
-        (use.gust && Gu == null) || (use.vent && Bl == null)) return { usable: false, v: v };
+        (use.gust && Gu == null) || (use.vent && Bl == null) || (use.rain && Rn == null)) return { usable: false, v: v };
     var fails = [], dir = {};
     if (use.temp && !within(T, rx.temp_min_f, rx.temp_max_f)) {
       var a = dirn(T, rx.temp_min_f, rx.temp_max_f); if (a) { fails.push(a > 0 ? 0 : 1); dir.temp = a; }
@@ -364,10 +444,14 @@
     }
     if (use.gust && !(Gu <= rx.gust_max_mph)) { fails.push(6); dir.gust = 1; }
     if (use.vent && !(Bl * M_TO_FT >= rx.vent_min_ft)) { fails.push(7); dir.blh = -1; }
+    if (use.rain && !within(Rn, rx.days_since_rain_min, rx.days_since_rain_max)) {
+      var e = dirn(Rn, rx.days_since_rain_min, rx.days_since_rain_max); if (e) { fails.push(e > 0 ? 8 : 9); dir.rain = e; }
+    }
     var anyFail = (use.temp && !within(T, rx.temp_min_f, rx.temp_max_f)) ||
                   (use.rh && !within(RH, rx.rh_min_pct, rx.rh_max_pct)) ||
                   (use.wind && !within(W, rx.wind_min_mph, rx.wind_max_mph)) ||
-                  (use.gust && !(Gu <= rx.gust_max_mph)) || (use.vent && !(Bl * M_TO_FT >= rx.vent_min_ft));
+                  (use.gust && !(Gu <= rx.gust_max_mph)) || (use.vent && !(Bl * M_TO_FT >= rx.vent_min_ft)) ||
+                  (use.rain && !within(Rn, rx.days_since_rain_min, rx.days_since_rain_max));
     return { usable: true, pass: !anyFail, fails: fails, dir: dir, v: v };
   }
 
@@ -376,7 +460,7 @@
   function scoreAll(rx, opStart, opEnd) {
     var use = limitsUsed(rx);
     var hours = new Float32Array(ND * NC), reason = new Int8Array(ND * NC).fill(-1);
-    var passing = new Int16Array(ND), usable = new Int16Array(ND), fails = new Int16Array(ND * 8);
+    var passing = new Int16Array(ND), usable = new Int16Array(ND), fails = new Int16Array(ND * N_SUBKEYS);
     for (var c = 0; c < NC; c++) {
       passing.fill(0); usable.fill(0); fails.fill(0);
       for (var t = 0; t < NT; t++) {
@@ -386,7 +470,7 @@
         if (!r.usable) continue;
         usable[d]++;
         if (r.pass) passing[d]++;
-        else for (var f = 0; f < r.fails.length; f++) fails[d * 8 + r.fails[f]]++;
+        else for (var f = 0; f < r.fails.length; f++) fails[d * N_SUBKEYS + r.fails[f]]++;
       }
       for (d = 0; d < ND; d++) {
         var o = d * NC + c;
@@ -396,12 +480,12 @@
         var bestL = null, bestTot = 0;
         for (var li = 0; li < LIMITS.length; li++) {
           var keys = LIMIT_SUBKEYS[LIMITS[li]], tot = 0;
-          for (var q = 0; q < keys.length; q++) tot += fails[d * 8 + keys[q]];
+          for (var q = 0; q < keys.length; q++) tot += fails[d * N_SUBKEYS + keys[q]];
           if (tot > bestTot) { bestTot = tot; bestL = keys; }
         }
         if (!bestL) continue;
         var bestK = bestL[0];
-        for (q = 1; q < bestL.length; q++) if (fails[d * 8 + bestL[q]] > fails[d * 8 + bestK]) bestK = bestL[q];
+        for (q = 1; q < bestL.length; q++) if (fails[d * N_SUBKEYS + bestL[q]] > fails[d * N_SUBKEYS + bestK]) bestK = bestL[q];
         reason[o] = bestK;
       }
     }
@@ -428,6 +512,7 @@
     if (u.wind) p.push("Wind " + rangeText(rx.wind_min_mph, rx.wind_max_mph, " mph"));
     if (u.gust) p.push("Gust ≤ " + fmtNum(rx.gust_max_mph) + " mph");
     if (u.vent) p.push("Mix ht ≥ " + fmtNum(rx.vent_min_ft) + " ft");
+    if (u.rain) p.push("Since rain " + rangeText(rx.days_since_rain_min, rx.days_since_rain_max, " d"));
     return p.length ? p.join(sep || " · ") : "no limits set";
   }
   function fmtDate(iso, opts) {
@@ -527,11 +612,22 @@
   // ------------------------------------------------------------------ recompute
   function validate(rx) {
     var msgs = [];
-    [["temp_min_f", "temp_max_f", "Temp"], ["rh_min_pct", "rh_max_pct", "RH"], ["wind_min_mph", "wind_max_mph", "Wind"]].forEach(function (p) {
+    [["temp_min_f", "temp_max_f", "Temp"], ["rh_min_pct", "rh_max_pct", "RH"], ["wind_min_mph", "wind_max_mph", "Wind"],
+     ["days_since_rain_min", "days_since_rain_max", "Since rain"]].forEach(function (p) {
       var bad = rx[p[0]] != null && rx[p[1]] != null && rx[p[0]] > rx[p[1]];
       $(p[0]).setAttribute("aria-invalid", String(bad)); $(p[1]).setAttribute("aria-invalid", String(bad));
       if (bad) msgs.push(p[2] + " min is above max");
     });
+    // Past-precipitation record length: a cell with no wetting rain in it reads as lookback+1
+    // ("N+"), so a limit above lookback can be misjudged -- say so rather than silently mislead.
+    var lb = RAIN.lookback_days, hi = Math.max(rx.days_since_rain_min || 0, rx.days_since_rain_max || 0);
+    if (lb != null && hi > lb) {
+      els.rxWarn.hidden = false;
+      els.rxWarn.textContent = (msgs.length ? msgs.join(" · ") + " — no hours can pass. " : "") +
+        "Rain record reaches back only " + lb + " days before day 1, so dry spells longer than that read as " +
+        (lb + 1) + "+ days — a days-since-rain limit above " + lb + " may be judged wrongly.";
+      return;
+    }
     if (state.opEnd <= state.opStart) msgs.push("Hours: end must be after start (no overnight windows)");
     els.rxWarn.hidden = !msgs.length;
     els.rxWarn.textContent = msgs.join(" · ") + (msgs.length ? " — no hours can pass." : "");
@@ -688,7 +784,7 @@
     var nx = G.nx, ny = G.ny, blank = new Uint8Array(nx * ny), any = false;
     for (var k = 0; k < blank.length; k++) if (fld.inside[k] && fld.f[k] === 0) { blank[k] = 1; any = true; }
     if (!any) return false;
-    var red = MP.colors[MP.colors.length - 1], blue = MP.colors[0], drew = false;
+    var red = MP.colors[MP.colors.length - 1], blue = MP.colors[0], drew = [];
     ctx.font = font(s, 4.3, true); ctx.textAlign = "center"; ctx.textBaseline = "middle";
     for (var y = 0; y < ny; y += 3) {
       for (var x = 0; x < nx; x += 3) {
@@ -703,10 +799,10 @@
         var code = fld.r[k2];
         ctx.fillStyle = RED_UP[code] ? red : blue;
         ctx.fillText(REASON_LABEL[code], P.x(G.lon0 + x * G.cell), P.y(G.lat0 + y * G.cell));
-        drew = true;
+        if (drew.indexOf(REASON_LABEL[code]) < 0) drew.push(REASON_LABEL[code]);
       }
     }
-    return drew;
+    return drew.length ? drew : false;  // letters drawn (for the key), or false
   }
 
   function drawCities(ctx, s, P, L) {
@@ -770,6 +866,15 @@
       ctx.font = font(s, 5, true);
       ctx.fillStyle = red; ctx.fillText("Red = hot/dry/", cx, y0 + 0.11 * s); ctx.fillText("windy/gusty", cx, y0 + 0.19 * s);
       ctx.fillStyle = blue; ctx.fillText("Blue = cold/", cx, y0 + 0.30 * s); ctx.fillText("moist/calm", cx, y0 + 0.38 * s);
+      // Letter key under the color bar -- same placement/order as render_day's LETTER_KEY.
+      var kx = (cl - 0.12) * s, ky = (L.top + L.h - inset) * s + 0.025 * h + 0.17 * s;
+      ctx.textAlign = "left"; ctx.fillStyle = "#333333";
+      ctx.font = font(s, 5.5, true); ctx.fillText("Letters", kx, ky);
+      LETTER_KEY.filter(function (lm) { return drewLetters.indexOf(lm[0]) >= 0; }).forEach(function (lm, i) {
+        var yy = ky + (0.1 + 0.075 * i) * s;
+        ctx.font = font(s, 5, true); ctx.fillText(lm[0], kx, yy);
+        ctx.font = font(s, 5); ctx.fillText(lm[1], kx + 0.16 * s, yy);
+      });
     }
   }
 
@@ -792,9 +897,14 @@
     var titleX = 0.012 * W + leftRes;
     fitText(ctx, D.title, issuedX - issuedW - 0.2 * s - titleX, 11.5, 6.5, s, true);
     ctx.textAlign = "left"; ctx.fillText(D.title, titleX, HEADER * s / 2);
-    ctx.font = font(s, 6.5); ctx.textAlign = "center";
-    ctx.fillText("Data Source: Open-Meteo (" + D.model + ")    Boundaries: Natural Earth    Custom Rx viewer: " +
-      (location.hostname || "local file"), W / 2, H - FOOTER * s / 2);
+    // Shrink-to-fit like the title: with the citations added (2026-09-29) this line runs close to
+    // the page width, and the hostname varies.
+    var footer = "Data: Open-Meteo (" + D.model + ")" + (D.rain_source === "gridMET" ? ", gridMET" : "") +
+      "    Rx scenarios: Worsnop et al. 2026, Fire Ecology 22:51    Boundaries: Natural Earth    Custom Rx: " +
+      (location.hostname || "local file");
+    fitText(ctx, footer, W - 0.3 * s, 6.5, 4.5, s, false);
+    ctx.textAlign = "center";
+    ctx.fillText(footer, W / 2, H - FOOTER * s / 2);
   }
 
   function drawPage(ctx, W, H, withLogos) {
@@ -922,8 +1032,8 @@
     els.detail.hidden = false;
     var d = state.day, use = limitsUsed(state.rx), h = state.result.hours[d * NC + c];
     els.detailTitle.textContent = llText(c) + " — " + (h !== h ? "no data" : h + " h in prescription");
-    els.detailSub.textContent = "Day " + (d + 1) + ", " + fmtDate(D.dates[d]) + " · shaded columns are outside " +
-      minToHHMM(state.opStart) + "–" + minToHHMM(state.opEnd);
+    els.detailSub.textContent = "Day " + (d + 1) + ", " + fmtDate(D.dates[d]) + " · since wetting rain: " +
+      rainText(c, d) + " · shaded columns are outside " + minToHHMM(state.opStart) + "–" + minToHHMM(state.opEnd);
     var rows = { hour: [], temp: [], rh: [], wind: [], gust: [], blh: [], ok: [] };
     for (var t = 0; t < NT; t++) {
       if (tDay[t] !== d) continue;
@@ -1082,7 +1192,10 @@
 
   $("issuedReadout").textContent = D.issued_text;
   $("sourceText").textContent = "Data source: Open-Meteo forecast API, model " + D.model + ". Grid " + G.cell +
-    "°, California + " + D.buffer_deg + "° land buffer (dashed). Boundaries: Natural Earth.";
+    "°, California + " + D.buffer_deg + "° land buffer (dashed). Days since wetting rain: " +
+    (D.rain_source === "gridMET" ? "observed gridMET precipitation before day 1, then the forecast."
+                                 : "Open-Meteo model precipitation (gridMET was unavailable this run).") +
+    " Boundaries: Natural Earth.";
   $("stdLink").hidden = !/custom\.html$/i.test(location.pathname);
   buildOpSelects();
   buildDayPills();
